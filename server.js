@@ -1,94 +1,99 @@
-const express = require("express");
-const twilio = require("twilio");
+import express from "express";
+import bodyParser from "body-parser";
+import axios from "axios";
+import twilio from "twilio";
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: false }));
 
-// ------------------- Шаг 1: спрашиваем заказ -------------------
+const { VoiceResponse } = twilio;
+
+let userSession = {};
+
+// 🔹 Первый шаг — приветствие
 app.post("/voice", (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
+  const twiml = new VoiceResponse();
+  const callSid = req.body.CallSid;
+  userSession[callSid] = {}; // создаём сессию
 
-  const gather = twiml.gather({
-    input: "speech",
-    action: "/order_details",
-    language: "ru-RU",
-    timeout: 10,
-    speechTimeout: "auto",
-    bargeIn: true
-  });
-
-  gather.say({ voice: "alice", language: "ru-RU" }, "Здравствуйте! Я ИИ. Что вы хотите заказать?");
-
+  twiml.say({ voice: "alice", language: "ru-RU" }, "Здравствуйте! Я ИИ. Что вы хотите заказать?");
+  twiml.redirect("/order_details");
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// ------------------- Шаг 2: получаем заказ, спрашиваем адрес -------------------
+// 🔹 Второй шаг — получение заказа
 app.post("/order_details", (req, res) => {
-  const order = req.body.SpeechResult || "Не распознано";
+  const twiml = new VoiceResponse();
+  const callSid = req.body.CallSid;
+  const speechResult = req.body.SpeechResult;
 
-  const twiml = new twilio.twiml.VoiceResponse();
+  if (speechResult) userSession[callSid].order = speechResult;
 
-  const gather = twiml.gather({
-    input: "speech",
-    action: `/confirm_order?order=${encodeURIComponent(order)}`,
-    language: "ru-RU",
-    timeout: 10,
-    speechTimeout: "auto",
-    bargeIn: true
-  });
-
-  gather.say({ voice: "alice", language: "ru-RU" }, `Вы заказали: ${order}. Пожалуйста, назовите адрес доставки.`);
+  twiml.say({ voice: "alice", language: "ru-RU" }, "Хорошо. Теперь скажите адрес доставки.");
+  twiml.redirect("/confirm_order");
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// ------------------- Шаг 3: переповтор заказа и адреса + подтверждение -------------------
+// 🔹 Третий шаг — подтверждение
 app.post("/confirm_order", (req, res) => {
-  const order = req.query.order || "Не распознано";
-  const address = req.body.SpeechResult || "Не распознано";
+  const twiml = new VoiceResponse();
+  const callSid = req.body.CallSid;
+  const speechResult = req.body.SpeechResult;
 
-  const twiml = new twilio.twiml.VoiceResponse();
+  if (speechResult) userSession[callSid].address = speechResult;
 
-  const gather = twiml.gather({
-    input: "speech",
-    action: `/final_step?order=${encodeURIComponent(order)}&address=${encodeURIComponent(address)}`,
-    language: "ru-RU",
-    timeout: 10,
-    speechTimeout: "auto",
-    bargeIn: true
-  });
-
-  gather.say({ voice: "alice", language: "ru-RU" }, `Вы заказали: ${order}. Доставка по адресу: ${address}. Всё верно? Пожалуйста, скажите да или нет.`);
+  const { order, address } = userSession[callSid];
+  twiml.say(
+    { voice: "alice", language: "ru-RU" },
+    `Вы заказали ${order}, по адресу ${address}. Подтвердите заказ, скажите да или нет.`
+  );
+  twiml.redirect("/final_step");
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// ------------------- Шаг 4: проверка "Да/Нет" -------------------
-app.post("/final_step", (req, res) => {
-  const order = req.query.order || "Не распознано";
-  const address = req.query.address || "Не распознано";
+// 🔹 Финальный шаг — отправка данных в n8n и завершение звонка
+app.post("/final_step", async (req, res) => {
+  const twiml = new VoiceResponse();
+  const callSid = req.body.CallSid;
   const answer = (req.body.SpeechResult || "").toLowerCase();
 
-  const twiml = new twilio.twiml.VoiceResponse();
+  const { order, address } = userSession[callSid] || {};
 
   if (answer.includes("да")) {
-    twiml.say({ voice: "alice", language: "ru-RU" }, "Спасибо! Ваш заказ принят.");
+    twiml.say({ voice: "alice", language: "ru-RU" }, "Спасибо! Ваш заказ принят. Хорошего дня!");
     twiml.hangup();
+
+    // 🔹 Отправляем заказ и адрес в n8n webhook
+    try {
+      await axios.post("https://danpan420.app.n8n.cloud/webhook-test/new-order", {
+        order,
+        address,
+      });
+      console.log("✅ Данные успешно отправлены в n8n");
+    } catch (err) {
+      console.error("❌ Ошибка при отправке в n8n:", err.message);
+    }
+
   } else {
-    twiml.say({ voice: "alice", language: "ru-RU" }, "Хорошо, давайте попробуем снова.");
-    twiml.redirect("/voice");
+    twiml.say({ voice: "alice", language: "ru-RU" }, "Хорошо, заказ отменён. До свидания!");
+    twiml.hangup();
   }
+
+  delete userSession[callSid];
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// ------------------- Запуск сервера -------------------
-app.listen(port, () => console.log("Server running on port", port));
+app.get("/", (req, res) => {
+  res.send("Twilio voice bot is running 🚀");
+});
 
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
