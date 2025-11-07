@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import bodyParser from "body-parser";
 import axios from "axios";
@@ -8,7 +9,8 @@ const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.urlencoded({ extended: false }));
 
-const { VoiceResponse } = twilio;
+// ✅ ES Modules: правильно берём VoiceResponse
+const { VoiceResponse } = twilio.twiml;
 
 let userSession = {};
 
@@ -20,6 +22,7 @@ app.post("/voice", (req, res) => {
 
   twiml.say({ voice: "alice", language: "ru-RU" }, "Здравствуйте! Я ИИ. Что вы хотите заказать?");
   twiml.redirect("/order_details");
+
   res.type("text/xml");
   res.send(twiml.toString());
 });
@@ -70,7 +73,6 @@ app.post("/final_step", async (req, res) => {
     twiml.say({ voice: "alice", language: "ru-RU" }, "Спасибо! Ваш заказ принят. Хорошего дня!");
     twiml.hangup();
 
-    // 🔹 Отправляем заказ и адрес в n8n webhook
     try {
       await axios.post("https://danpan420.app.n8n.cloud/webhook-test/new-order", {
         order,
