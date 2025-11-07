@@ -2,9 +2,10 @@
   "name": "voice-ai-server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
@@ -17,3 +18,4 @@
     "axios": "^1.7.3"
   }
 }
+
